@@ -7,8 +7,7 @@ def get_tiers():
     clients_index = np.array(range(clients_num)).reshape(tiers, -1)
     tier_info = {}
     for k in clients_index:
-        for i in k[1:]:
-            tier_info[i] = k[0]
+        tier_info[k[0]] = k
     return tier_info
 
 print(get_tiers())
