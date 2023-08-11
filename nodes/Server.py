@@ -5,40 +5,38 @@ import torch.distributed as dist
 import numpy as np
 from tools import *
 from .comm_op import *
-import torch.multiprocessing as mp
+
 class Server(object):
     def __init__(self, args):
         super().__init__()
+        self.server_id=args.clients-1
         self.args = args
 
     def init_process(self):
-        torch.manual_seed(2022)
-        torch.cuda.manual_seed(2022)
-        torch.cuda.manual_seed_all(2022)
-        torch.backends.cudnn.deterministic = True
         os.environ['MASTER_ADDR'] = '127.0.0.1'
         os.environ['MASTER_PORT'] = '12340'
-        dist.init_process_group("gloo", rank=0, world_size=self.args.clients)
+        dist.init_process_group("gloo", rank=self.server_id, world_size=self.args.clients)
+        self.setup_seed(2222)
         self.test_loader=self.args.distributer["global"]["test"]
         self.model=create_models(self.args.modelname,self.args.dataset)
         print("Server Init Network Success!")
 
     def _client_sampling(self, round_idx):
         """Sample clients by given sampling ratio"""
-
         # make sure for same client sampling for fair comparison
         np.random.seed(round_idx+1234)
         clients_per_round = max(int((self.args.clients-1) * self.args.sample_ratio), 1)
         sampled_clients = np.random.choice(
-            range(1,self.args.clients), clients_per_round, replace=False
+            range(0,self.server_id-1), clients_per_round, replace=False
         )
         info = torch.tensor(sampled_clients)
         print("Sample client list: %s"%str(info.numpy().tolist()))
-        dist.broadcast(info,0)
+        dist.broadcast(info,self.server_id)
         return info
 
     def run(self):
         self.init_process()
+
         for r in range(self.args.rounds):
             print("======================== Round: %d ========================"%(r))
             self.sample_clients=self._client_sampling(r)
@@ -47,12 +45,13 @@ class Server(object):
             print("Test_loss: %.3f | Test_accuracy: %.2f"%(test_loss,test_acc))
             print("===========================================================")
 
+
     def set_ratio(self):
         clients_num = len(self.sample_clients)
         if self.args.aggregate_methods == "uniform":
             self.ratio=[1/clients_num]*clients_num
         elif self.args.aggregate_methods == "weight":
-            ratio = self.args.data_ratio[self.sample_clients-1]
+            ratio = self.args.data_ratio[self.sample_clients]
             self.ratio = [r/np.sum(ratio) for r in ratio]
 
     def aggregation(self):
@@ -113,6 +112,25 @@ class Server(object):
         self.model.train()
         self.model.cpu()
         return 100. * correct / total, test_loss / (batch_idx + 1)
+
+    def setup_seed(self,seed):
+        r"""
+        Fix all the random seed used in numpy, torch and random module
+
+        Args:
+            seed (int): the random seed
+        """
+        if seed < 0:
+            torch.backends.cudnn.enabled = False
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+            torch.use_deterministic_algorithms(True)
+            seed = -seed
+        random.seed(1 + seed)
+        np.random.seed(21 + seed)
+        os.environ['PYTHONHASHSEED'] = str(seed)
+        torch.manual_seed(12 + seed)
+        torch.cuda.manual_seed_all(123 + seed)
 
 
 

@@ -4,22 +4,22 @@ os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 import torch
 import argparse
 import multiprocessing as mp
-from algorithm import fedavg,fedprox
+from algorithm import fedavg,fedprox,hierfl
 from tools import data_distributer
 import numpy as np
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--algorithm', type=str, default="fedprox")
+    parser.add_argument('--algorithm', type=str, default="hierfl")
     parser.add_argument('--datapath', type=str, default='../../data')
     parser.add_argument('--dataset', type=str, default='cifar10')
     parser.add_argument('--modelname', type=str, default='fedavg_cifar')
     parser.add_argument('--clients', type=int, default=21)
-    parser.add_argument('--layers', type=int, default=5)
+    # parser.add_argument('--layers', type=int, default=5)
     parser.add_argument('--rounds', type=int, default=5)
     parser.add_argument('--epochs', type=int, default=1)
     parser.add_argument('--sample_ratio', type=int, default=0.5)
-    parser.add_argument('--aggregate_methods', type=str, default="weight")
+    parser.add_argument('--aggregate_methods', type=str, default="uniform")
     parser.add_argument('--batchsizes', type=float, default=64)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--momentum', type=float, default=0.9)
@@ -36,6 +36,7 @@ if __name__=="__main__":
     args.algorithms = {
         "fedavg": [fedavg],
         "fedprox": [fedprox, {"mu": 0.01}],
+        "hierfl":[hierfl,{"tiers":5}]
     }
     processes = []
     # start training
@@ -52,7 +53,7 @@ if __name__=="__main__":
     print("Client data ratio:",args.data_ratio)
     print("=============================================================")
     for c in range(args.clients):
-        if c == 0:
+        if c == args.clients-1:
             # -------------------------start server--------------------------------
             S = args.algorithms[args.algorithm][0].Server(args)
             p = mp.Process(target=S.run, args=())
@@ -62,11 +63,10 @@ if __name__=="__main__":
             p = mp.Process(target=C.run, args=())
         p.start()
         processes.append(p)
-    for p in processes:
-        p.join()
 
     # stop training
-    if not processes[0].is_alive():
-        for p in processes[1:]:
+    processes[-1].join()
+    if not processes[-1].is_alive():
+        for p in processes[:-1]:
             p.terminate()
 

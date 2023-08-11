@@ -8,6 +8,7 @@ from .comm_op import *
 class Client(object):
     def __init__(self, client_id, args):
         super().__init__()
+        self.server_id=args.clients-1
         self.client_id=client_id
         self.args = args
 
@@ -20,9 +21,10 @@ class Client(object):
         os.environ['MASTER_ADDR'] = '127.0.0.1'
         os.environ['MASTER_PORT'] = '12340'
         dist.init_process_group("gloo", rank=self.client_id, world_size=self.args.clients)
+        self.setup_seed(2222)
         torch.cuda.set_device(self.client_id % self.args.gpu_nums)
 
-        self.train_loader=self.args.distributer["local"][self.client_id-1]["train"]
+        self.train_loader=self.args.distributer["local"][self.client_id]["train"]
         self.model=create_models(self.args.modelname,self.args.dataset)
 
         self.criterion = torch.nn.CrossEntropyLoss().cuda()
@@ -32,7 +34,7 @@ class Client(object):
 
     def get_sample_clients(self):
         sample_clients=torch.tensor([0]*int(self.args.clients*self.args.sample_ratio))
-        broadcast(sample_clients,0)
+        broadcast(sample_clients,self.server_id)
         return sample_clients
 
     def run(self):
@@ -61,8 +63,8 @@ class Client(object):
 
     def communicate_with_server(self):
         info, indices=self.pack()
-        send_info(info,0)
-        recv_info(info,0)
+        send_info(info,self.server_id)
+        recv_info(info,self.server_id)
         model_param, extra_info = self.unpack(info,indices)
         self.set_model(model_param)
 
@@ -89,3 +91,21 @@ class Client(object):
         for i,p in enumerate(self.model.parameters()):
             p.data= model_param[i].view(*p.shape)
 
+    def setup_seed(self,seed):
+        r"""
+        Fix all the random seed used in numpy, torch and random module
+
+        Args:
+            seed (int): the random seed
+        """
+        if seed < 0:
+            torch.backends.cudnn.enabled = False
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+            torch.use_deterministic_algorithms(True)
+            seed = -seed
+        random.seed(1 + seed)
+        np.random.seed(21 + seed)
+        os.environ['PYTHONHASHSEED'] = str(seed)
+        torch.manual_seed(12 + seed)
+        torch.cuda.manual_seed_all(123 + seed)
