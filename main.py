@@ -4,17 +4,18 @@ os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 import torch
 import argparse
 import multiprocessing as mp
-from algorithm import fedavg,fedprox,hierfl
+from algorithm import fedavg, fedprox, hierfl, fedasync
 from tools import data_distributer
 import numpy as np
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--algorithm', type=str, default="hierfl")
+    parser.add_argument('--algorithm', type=str, default="fedasync")
     parser.add_argument('--datapath', type=str, default='../../data')
     parser.add_argument('--dataset', type=str, default='cifar10')
     parser.add_argument('--modelname', type=str, default='fedavg_cifar')
     parser.add_argument('--clients', type=int, default=21)
+    parser.add_argument('--seed', type=int, default=2222)
     # parser.add_argument('--layers', type=int, default=5)
     parser.add_argument('--rounds', type=int, default=20)
     parser.add_argument('--epochs', type=int, default=1)
@@ -34,9 +35,10 @@ if __name__=="__main__":
     args = get_args()
     print(args)
     args.algorithms = {
-        "fedavg": [fedavg],
+        "fedavg": [fedavg,{}],
         "fedprox": [fedprox, {"mu": 0.01}],
-        "hierfl":[hierfl,{"tiers":5,"flag":'poly',"alpha":0.6}]
+        "hierfl":[hierfl, {"tiers":5,"flag":'poly',"alpha":0.6}],
+        "fedasync": [fedasync, {"flag": 'poly', "alpha": 0.3}]
     }
     processes = []
     # start training

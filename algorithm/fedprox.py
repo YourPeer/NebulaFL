@@ -21,7 +21,7 @@ class Client(BasicClient):
                 loss_proximal = 0
                 for pm, ps in zip(self.model.parameters(), src_model.parameters()):
                     loss_proximal += torch.sum(torch.pow(pm - ps, 2))
-                loss = loss + 0.5 * self.args.algorithms[self.args.algorithm][1]["mu"] * loss_proximal
+                loss = loss + 0.5 * self.mu * loss_proximal
                 loss.backward()
                 self.optimizer.step()
         src_model.cpu()

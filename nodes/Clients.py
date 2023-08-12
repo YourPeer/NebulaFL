@@ -13,10 +13,7 @@ class Client(object):
         self.args = args
 
     def init_process(self):
-        torch.manual_seed(2022)
-        torch.cuda.manual_seed(2022)
-        torch.cuda.manual_seed_all(2022)
-        torch.backends.cudnn.deterministic = True
+        self.setup_seed(self.args.seed)
         torch.cuda.set_device(self.client_id % self.args.gpu_nums)
         os.environ['MASTER_ADDR'] = '127.0.0.1'
         os.environ['MASTER_PORT'] = '12340'
@@ -31,6 +28,7 @@ class Client(object):
         self.optimizer = torch.optim.SGD(self.model.parameters(),
                                          lr=self.args.lr,
                                          momentum=self.args.momentum)
+        self.init_algo_para(self.args.algorithms[self.args.algorithm][1])
 
     def get_sample_clients(self):
         sample_clients=torch.tensor([0]*int(self.args.clients*self.args.sample_ratio))
@@ -40,6 +38,7 @@ class Client(object):
     def run(self):
         self.init_process()
         self.model.train()
+
         for round in range(self.args.rounds):
             sample_clients=self.get_sample_clients()
             if self.client_id in sample_clients:
@@ -109,3 +108,12 @@ class Client(object):
         os.environ['PYTHONHASHSEED'] = str(seed)
         torch.manual_seed(12 + seed)
         torch.cuda.manual_seed_all(123 + seed)
+
+
+    def init_algo_para(self, algo_para: dict):
+        self.algo_para = algo_para
+        if len(self.algo_para) == 0: return
+        # register the algorithm-dependent hyperparameters as the attributes of the server and all the clients
+        for para_name, value in self.algo_para.items():
+            self.__setattr__(para_name, value)
+        return

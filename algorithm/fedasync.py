@@ -57,10 +57,11 @@ class Server(BasicServer):
         return model_param, id, tao
 
     def s(self, delta_tau):
+        clients=self.args.clients
         if self.flag=="constant":
-            return 1 / self.tiers
+            return 1 / clients
         else:
-            return 1/self.tiers if delta_tau <= self.tiers else 1.0 / (self.tiers*((delta_tau-self.tiers +1)**self.alpha))
+            return 1/clients if delta_tau <= clients else 1.0 / (clients*((delta_tau-clients +1)**self.alpha))
 
 
 class Client(BasicClient):
@@ -71,50 +72,11 @@ class Client(BasicClient):
         self.tao=0
         for round in range(self.args.rounds):
              self.local_train()
-             self.communicate_with_server()
-
-    def aggregation(self,sub_node_list): # choose a leader node for sync aggregation
-        sub_node_list.append(self.client_id)
-        info, indices = self.pack()
-        clients_num = len(sub_node_list)
-        info_list = [torch.zeros_like(info) for _ in range(clients_num-1)]
-        self.set_ratio(sub_node_list)
-        global_params_list = [p.data.view(-1, 1)*self.ratio[-1] for p in self.model.parameters()]
-        for i, k in enumerate(sub_node_list[:-1]):
-            recv_info(info_list[i], k)
-            local_params_list, id = self.unpack(info_list[i], indices)
-            global_params_list = [lp * self.ratio[i] + gp for lp, gp in zip(local_params_list, global_params_list)]
-        self.set_model(global_params_list)
-        info, indices = self.pack() # to server
-        try:
-            send_info(info, self.server_id)
-        except:
-            # print("leader_node %d terminated." % (self.client_id))
-            sys.exit()
-        recv_info(info, self.server_id) # recv from server
-        global_params_list, id = self.unpack(info, indices)
-        self.set_model(global_params_list)  # set leader node model
-        info, indices = self.pack() # to all subnodes
-        for i in sub_node_list[:-1]:
-            send_info(info, i)
-
-    def set_ratio(self, sub_node_list):
-        clients_num = len(sub_node_list)
-        if self.args.aggregate_methods == "uniform":
-            self.ratio=[1/clients_num]*clients_num
-        elif self.args.aggregate_methods == "weight":
-            ratio = self.args.data_ratio[sub_node_list]
-            self.ratio = [r/np.sum(ratio) for r in ratio]
-
-    def get_tiers(self):
-        clients_num=self.args.clients-1
-        tiers=self.args.algorithms[self.args.algorithm][1]["tiers"]
-        clients_index = np.array(range(clients_num)).reshape(tiers, -1)
-        tier_info = {}
-        for k in clients_index:
-            for i in k[1:]:
-                tier_info[i] = k[0]
-        return tier_info
+             try:
+                self.communicate_with_server()
+             except:
+             # print("leader_node %d terminated." % (self.client_id))
+                sys.exit()
 
     def pack(self):
         info = [torch.flatten(p.data) for p in self.model.parameters()]

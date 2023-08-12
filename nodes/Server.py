@@ -16,9 +16,10 @@ class Server(object):
         os.environ['MASTER_ADDR'] = '127.0.0.1'
         os.environ['MASTER_PORT'] = '12340'
         dist.init_process_group("gloo", rank=self.server_id, world_size=self.args.clients)
-        self.setup_seed(2222)
+        self.setup_seed(self.args.seed)
         self.test_loader=self.args.distributer["global"]["test"]
         self.model=create_models(self.args.modelname,self.args.dataset)
+        self.init_algo_para(self.args.algorithms[self.args.algorithm][1])
         print("Server Init Network Success!")
 
     def _client_sampling(self, round_idx):
@@ -131,6 +132,14 @@ class Server(object):
         os.environ['PYTHONHASHSEED'] = str(seed)
         torch.manual_seed(12 + seed)
         torch.cuda.manual_seed_all(123 + seed)
+
+    def init_algo_para(self, algo_para: dict):
+        self.algo_para = algo_para
+        if len(self.algo_para) == 0: return
+        # register the algorithm-dependent hyperparameters as the attributes of the server and all the clients
+        for para_name, value in self.algo_para.items():
+            self.__setattr__(para_name, value)
+        return
 
 
 
