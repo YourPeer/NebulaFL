@@ -28,7 +28,7 @@ class Server(object):
         np.random.seed(round_idx+1234)
         clients_per_round = max(int((self.args.clients-1) * self.args.sample_ratio), 1)
         sampled_clients = np.random.choice(
-            range(0,self.server_id-1), clients_per_round, replace=False
+            range(0,self.args.clients-1), clients_per_round, replace=False
         )
         info = torch.tensor(sampled_clients)
         print("Sample client list: %s"%str(info.numpy().tolist()))

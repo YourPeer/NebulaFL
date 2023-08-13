@@ -10,7 +10,7 @@ import numpy as np
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--algorithm', type=str, default="fedasync")
+    parser.add_argument('--algorithm', type=str, default="fedavg")
     parser.add_argument('--datapath', type=str, default='../../data')
     parser.add_argument('--dataset', type=str, default='cifar10')
     parser.add_argument('--modelname', type=str, default='fedavg_cifar')
@@ -19,12 +19,12 @@ def get_args():
     # parser.add_argument('--layers', type=int, default=5)
     parser.add_argument('--rounds', type=int, default=20)
     parser.add_argument('--epochs', type=int, default=1)
-    parser.add_argument('--sample_ratio', type=int, default=0.5)
-    parser.add_argument('--aggregate_methods', type=str, default="weight")
-    parser.add_argument('--batchsizes', type=float, default=64)
+    parser.add_argument('--sample_ratio', type=float, default=0.5)
+    parser.add_argument('--aggregate_methods', type=str, default="weight") # or uniform
+    parser.add_argument('--batchsizes', type=float, default=32)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--momentum', type=float, default=0.9)
-    parser.add_argument('--partition', type=str, default="niid")
+    parser.add_argument('--partition', type=str, default="niid") # iid,niid,shard
     parser.add_argument('--dir', type=float, default=0.5)
     parser.add_argument('--shards', type=float, default=2)
     parser.add_argument('--gpu_nums', type=int, default=4)

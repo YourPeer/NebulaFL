@@ -1,13 +1,8 @@
 import numpy as np
 
+clients=range(20)
+rs = np.random.normal(1.0, 1.0, len(clients))
+rs = rs.clip(0.01, 2)
+_my_working_amount = {cid:max(int(r*5),1) for  cid,r in zip(clients, rs)}
 
-def get_tiers():
-    clients_num = 20
-    tiers = 5
-    clients_index = np.array(range(clients_num)).reshape(tiers, -1)
-    tier_info = {}
-    for k in clients_index:
-        tier_info[k[0]] = k
-    return tier_info
-
-print(get_tiers())
+print(_my_working_amount)

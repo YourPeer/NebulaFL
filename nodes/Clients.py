@@ -28,6 +28,8 @@ class Client(object):
         self.optimizer = torch.optim.SGD(self.model.parameters(),
                                          lr=self.args.lr,
                                          momentum=self.args.momentum)
+        self.current_steps=0
+        self.num_steps=self.args.epochs*len(self.train_loader)
         self.init_algo_para(self.args.algorithms[self.args.algorithm][1])
 
     def get_sample_clients(self):
@@ -48,16 +50,16 @@ class Client(object):
     def local_train(self):
         self.model.train()
         self.model.cuda()
-        for _ in range(self.args.epochs):
-            for data, targets in self.train_loader:
-                self.optimizer.zero_grad()
-                # forward pass
-                data, targets = data.cuda(), targets.cuda()
-                output = self.model(data)
-                loss = self.criterion(output, targets)
-                # backward pass
-                loss.backward()
-                self.optimizer.step()
+        for _ in range(self.num_steps):
+            (data, targets) = self.get_batch_data()
+            self.optimizer.zero_grad()
+            # forward pass
+            data, targets = data.cuda(), targets.cuda()
+            output = self.model(data)
+            loss = self.criterion(output, targets)
+            # backward pass
+            loss.backward()
+            self.optimizer.step()
         self.model.cpu()
 
     def communicate_with_server(self):
@@ -117,3 +119,21 @@ class Client(object):
         for para_name, value in self.algo_para.items():
             self.__setattr__(para_name, value)
         return
+
+    def get_batch_data(self):
+        """
+        Get the batch of training data
+        Returns:
+            a batch of data
+        """
+        try:
+            batch_data = next(self.data_loader)
+        except Exception as e:
+            self.data_loader = iter(self.train_loader)
+            batch_data = next(self.data_loader)
+        # clear local_movielens_recommendation DataLoader when finishing local_movielens_recommendation training
+        self.current_steps = (self.current_steps + 1) % self.num_steps
+        if self.current_steps == 0:
+            self.data_loader = None
+            self._train_loader = None
+        return batch_data
