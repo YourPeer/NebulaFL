@@ -117,7 +117,7 @@ class Client(BasicClient):
         info, indices = self.pack() # to all subnodes
         for i in sub_node_list[:-1]:
             send_info(info, i)
-        
+
 
     def add_extra_info(self):
         extra_info_dict={
