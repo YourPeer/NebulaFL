@@ -1,3 +1,5 @@
+import copy
+
 from nodes import BasicServer
 from nodes import BasicClient
 from nodes import send_info,recv_info
@@ -8,18 +10,20 @@ import torch.multiprocessing as mp
 import sys
 import time
 class Server(BasicServer):
-
     def run(self):
         lock = torch.multiprocessing.Lock()
         self.init_process()
         self.T=0
+        self.train_loss=0.0
         for r in range(self.args.rounds):
             lock.acquire()
             self.T+=1
             self.args.logger.info("======================== Round: %d ========================"%(r))
-            tier_train_loss, id = self.async_aggregation()
+            self.train_loss, id = self.async_aggregation()
             test_acc, test_loss = self.test_model()
-            self.args.logger.info("Test_loss: %.3f | Test_accuracy: %.2f | Tier_train_loss: %.3f | Edge_server_id (Tier leader): %d" % (test_loss, test_acc, tier_train_loss, id))
+            self.args.logger.info("Test_loss: %.3f | Test_accuracy: %.2f | Tier_train_loss: %.3f | Edge_server_id (Tier leader): %d" % (test_loss, test_acc, self.train_loss, id))
+            # self.args.logger.info(
+            #     "Tier_train_loss_list: %s " % (str(tier_train_loss_list)))
             self.args.logger.info("===========================================================")
             lock.release()
 
@@ -27,36 +31,29 @@ class Server(BasicServer):
         info, indices = self.pack()
         leader_info = torch.zeros_like(info)
         dist.recv(leader_info)
-        leader_params, id, tao, tier_train_loss = self.unpack(leader_info, indices)
+        leader_params, extra_info = self.unpack(leader_info, indices)
+        id, tao, train_loss=self.get_extra_info(extra_info)
         global_params = [p.data.view(-1, 1) for p in self.model.parameters()]
         alpha_t = self.s(self.T - tao)
         global_params=[gp*(1-alpha_t)+lp*alpha_t for lp,gp in zip(leader_params,global_params)]
         self.set_model(global_params)
         info, indices = self.pack()
         dist.send(info, id)
-        return tier_train_loss, id
+        return train_loss, id
 
-    def pack(self):
-        info = [torch.flatten(p.data) for p in self.model.parameters()]
-        extra_info = torch.tensor([0,self.T,0.0])
-        info.append(extra_info)
-        indices = []
-        s = 0
-        for i in info:
-            size = i.size()[0]
-            indices.append((s, s + size))
-            s += size
-        info = torch.cat(info).view((-1, 1))
-        return info, indices
+    def add_extra_info(self):
+        extra_info_dict = {
+            "client_id": [self.server_id],
+            "tao": [self.T],
+            "train_loss": [self.train_loss]
+        }
+        return extra_info_dict
 
-    def unpack(self, info, indices):
-        l = [info[s:e] for (s, e) in indices]
-        model_param = l[:-1]
-        extra_info = l[-1].view(-1).tolist()
-        id = int(extra_info[0])
-        tao=int(extra_info[1])
-        tier_train_loss=extra_info[2]
-        return model_param, id, tao, tier_train_loss
+    def get_extra_info(self, extra_info):
+        id = int(extra_info[0].item())
+        tao = int(extra_info[1].item())
+        train_loss = extra_info[2].item()
+        return id, tao, train_loss
 
     def s(self, delta_tau):
         if self.flag=="constant":
@@ -71,14 +68,29 @@ class Client(BasicClient):
         self.init_process()
         self.model.train()
         self.tao=0
+        self.train_loss=0.0
+        tier_info = self.get_tiers()
         for round in range(self.args.rounds):
              self.local_train()
-             self.local_train_loss = self.test_model()
+             self.train_loss = self.test_model()
+
              try:
-                 self.communicate_with_server()
-             except:
-                 # print("leader_node %d terminated." % (self.client_id))
+                self.communicate_with_server(tier_info)
+             except Exception as e:
+                 print(type(e).__name__ + ": " + str(e))
                  sys.exit()
+
+    def communicate_with_server(self,tier_info):
+        if self.client_id in tier_info.values(): # Edge server
+            sub_node_list = [key for key, value in tier_info.items() if value == self.client_id]
+            self.aggregation(sub_node_list)
+        else:
+            edge_server_id=tier_info[self.client_id]
+            info, indices=self.pack()
+            send_info(info,edge_server_id)
+            recv_info(info,edge_server_id)
+            model_param, extro_info = self.unpack(info,indices)
+            self.set_model(model_param)
 
     def aggregation(self,sub_node_list): # choose a leader node for sync aggregation
         sub_node_list.append(self.client_id) # append edge_server
@@ -87,26 +99,39 @@ class Client(BasicClient):
         info_list = [torch.zeros_like(info) for _ in range(clients_num-1)]
         self.set_ratio(sub_node_list)
         global_params_list = [p.data.view(-1, 1)*self.ratio[-1] for p in self.model.parameters()]
-        train_loss_list=[self.local_train_loss]
+        train_loss_list=[self.train_loss]
         for i, k in enumerate(sub_node_list[:-1]):
             recv_info(info_list[i], k)
-            local_params_list, id = self.unpack(info_list[i], indices)
-            train_loss_list.append(self.local_train_loss)
+            local_params_list, extra_info  = self.unpack(info_list[i], indices)
+            id, tao, train_loss = self.get_extra_info(extra_info)
+            train_loss_list.append(train_loss)
             global_params_list = [lp * self.ratio[i] + gp for lp, gp in zip(local_params_list, global_params_list)]
+
         self.set_model(global_params_list)
-        self.local_train_loss=np.mean(train_loss_list)
+        self.train_loss=np.mean(train_loss_list)  # float64 to float32
         info, indices = self.pack() # to server
-        try:
-            send_info(info, self.server_id)
-        except:
-            # print("leader_node %d terminated." % (self.client_id))
-            sys.exit()
-        recv_info(info, self.server_id) # recv from server
-        global_params_list, id = self.unpack(info, indices)
+        send_info(info, self.server_id)
+        dist.recv(info) # recv from server
+        global_params_list, extro_info= self.unpack(info, indices)
         self.set_model(global_params_list)  # set leader node model
         info, indices = self.pack() # to all subnodes
         for i in sub_node_list[:-1]:
             send_info(info, i)
+        
+
+    def add_extra_info(self):
+        extra_info_dict={
+            "client_id":[self.client_id],
+            "tao": [self.tao],
+            "train_loss":[self.train_loss]
+        }
+        return extra_info_dict
+
+    def get_extra_info(self,extra_info):
+        id=int(extra_info[0].item())
+        tao=int(extra_info[1].item())
+        train_loss=extra_info[2].item()
+        return id,tao,train_loss
 
     def set_ratio(self, sub_node_list):
         clients_num = len(sub_node_list)
@@ -126,25 +151,7 @@ class Client(BasicClient):
                 tier_info[i] = k[0]
         return tier_info
 
-    def pack(self):
-        info = [torch.flatten(p.data) for p in self.model.parameters()]
-        extra_info = torch.tensor([self.client_id, self.tao, self.local_train_loss])
-        info.append(extra_info)
-        indices = []
-        s = 0
-        for i in info:
-            size = i.size()[0]
-            indices.append((s, s + size))
-            s += size
-        info = torch.cat(info).view((-1, 1))
-        return info, indices
 
-    def unpack(self,info,indices):
-        l = [info[s:e] for (s, e) in indices]
-        model_param=l[:-1]
-        extra_info = l[-1].view(-1).tolist()
-        id = int(extra_info[0])
-        self.tao=int(extra_info[1])
-        self.local_train_loss=extra_info[2]
-        return model_param, id
+
+
 

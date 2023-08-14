@@ -46,7 +46,7 @@ class Client(object):
             self.sample_clients=self.get_sample_clients()
             if self.client_id in self.sample_clients:
                 self.local_train()
-                self.local_train_loss = self.test_model()
+                self.train_loss = self.test_model()
                 self.communicate_with_server()
 
     def local_train(self):
@@ -71,10 +71,18 @@ class Client(object):
         model_param, extra_info = self.unpack(info,indices)
         self.set_model(model_param)
 
+    def add_extra_info(self):
+        extra_info_dict={
+            "client_id":[self.client_id],
+            "train_loss":[self.train_loss]
+        }
+        return extra_info_dict
+
     def pack(self):
         info = [torch.flatten(p.data) for p in self.model.parameters()]
-        extra_info = torch.tensor([self.client_id, self.local_train_loss])
-        info.append(extra_info)
+        extra_info_dict=self.add_extra_info()
+        for k in extra_info_dict:
+            info.append(torch.tensor(extra_info_dict[k],dtype=torch.float32))
         indices = []
         s = 0
         for i in info:
@@ -82,12 +90,15 @@ class Client(object):
             indices.append((s, s + size))
             s += size
         info = torch.cat(info).view((-1, 1))
+
         return info, indices
 
     def unpack(self,info,indices):
+        extra_info_dict=self.add_extra_info()
+        dict_size=len(extra_info_dict)
         l = [info[s:e] for (s, e) in indices]
-        model_param=l[:-1]
-        extra_info=l[-1]
+        model_param=l[:-dict_size]
+        extra_info=l[-dict_size:]
         return model_param,extra_info
 
     def set_model(self,model_param):
@@ -158,6 +169,6 @@ class Client(object):
                 #correct += predicted.eq(targets).sum().item()
         self.model.train()
         self.model.cpu()
-        local_train_loss=train_loss / (batch_idx + 1)
+        train_loss=train_loss / (batch_idx + 1)
         # correct=100. * correct / total
-        return local_train_loss
+        return train_loss

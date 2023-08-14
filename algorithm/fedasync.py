@@ -13,13 +13,14 @@ class Server(BasicServer):
         lock = torch.multiprocessing.Lock()
         self.init_process()
         self.T=0
+        self.train_loss=0.0
         for r in range(self.args.rounds):
             lock.acquire()
             self.T+=1
             self.args.logger.info("======================== Round: %d ========================"%(r))
-            train_loss, id=self.async_aggregation()
+            id, self.train_loss=self.async_aggregation()
             test_acc, test_loss = self.test_model()
-            self.args.logger.info("Test_loss: %.3f | Test_accuracy: %.3f | Train_loss: %.3f | Client: %d" % (test_loss, test_acc, train_loss, id))
+            self.args.logger.info("Test_loss: %.3f | Test_accuracy: %.3f | Train_loss: %.3f | Client: %d" % (test_loss, test_acc, self.train_loss, id))
             self.args.logger.info("===========================================================")
             lock.release()
 
@@ -27,36 +28,29 @@ class Server(BasicServer):
         info, indices = self.pack()
         leader_info = torch.zeros_like(info)
         dist.recv(leader_info)
-        leader_params, id, tao, train_loss = self.unpack(leader_info, indices)
+        leader_params, extra_info = self.unpack(leader_info, indices)
+        id,tao,train_loss=self.get_extra_info(extra_info)
         global_params = [p.data.view(-1, 1) for p in self.model.parameters()]
         alpha_t = self.s(self.T - tao)
         global_params=[gp*(1-alpha_t)+lp*alpha_t for lp,gp in zip(leader_params,global_params)]
         self.set_model(global_params)
         info, indices = self.pack()
         dist.send(info, id)
-        return train_loss, id
+        return  id, train_loss
 
-    def pack(self):
-        info = [torch.flatten(p.data) for p in self.model.parameters()]
-        extra_info = torch.tensor([0,self.T,0.0])
-        info.append(extra_info)
-        indices = []
-        s = 0
-        for i in info:
-            size = i.size()[0]
-            indices.append((s, s + size))
-            s += size
-        info = torch.cat(info).view((-1, 1))
-        return info, indices
+    def add_extra_info(self):
+        extra_info_dict={
+            "client_id":[self.server_id],
+            "tao": [self.T],
+            "train_loss":[self.train_loss]
+        }
+        return extra_info_dict
 
-    def unpack(self, info, indices):
-        l = [info[s:e] for (s, e) in indices]
-        model_param = l[:-1]
-        extra_info = l[-1].view(-1).tolist()
-        id = int(extra_info[0])
-        tao=int(extra_info[1])
-        train_loss=extra_info[2]
-        return model_param, id, tao, train_loss
+    def get_extra_info(self,extra_info):
+        id=int(extra_info[0].item())
+        tao=int(extra_info[1].item())
+        train_loss=extra_info[2].item()
+        return id,tao,train_loss
 
     def s(self, delta_tau):
         clients=self.args.clients
@@ -72,6 +66,7 @@ class Client(BasicClient):
         self.init_process()
         self.model.train()
         self.tao=0
+        self.local_train_loss=0.0
         for round in range(self.args.rounds):
              self.local_train()
              self.local_train_loss = self.test_model()
@@ -81,24 +76,11 @@ class Client(BasicClient):
              # print("leader_node %d terminated." % (self.client_id))
                 sys.exit()
 
-    def pack(self):
-        info = [torch.flatten(p.data) for p in self.model.parameters()]
-        extra_info = torch.tensor([self.client_id,self.tao,self.local_train_loss])
-        info.append(extra_info)
-        indices = []
-        s = 0
-        for i in info:
-            size = i.size()[0]
-            indices.append((s, s + size))
-            s += size
-        info = torch.cat(info).view((-1, 1))
-        return info, indices
-
-    def unpack(self,info,indices):
-        l = [info[s:e] for (s, e) in indices]
-        model_param=l[:-1]
-        extra_info = l[-1].view(-1).tolist()
-        id = int(extra_info[0])
-        self.tao=int(extra_info[1])
-        return model_param, id
+    def add_extra_info(self):
+        extra_info_dict={
+            "client_id":[self.client_id],
+            "tao": [self.tao],
+            "train_loss":[self.local_train_loss]
+        }
+        return extra_info_dict
 

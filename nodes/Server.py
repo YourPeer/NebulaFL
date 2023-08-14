@@ -22,6 +22,20 @@ class Server(object):
         self.init_algo_para(self.args.algorithms[self.args.algorithm][1])
         self.args.logger.info("Server Init Network Success!")
 
+
+
+    def run(self):
+        self.init_process()
+        self.train_loss=0.0
+        for r in range(self.args.rounds):
+            self.args.logger.info("======================== Round: %d ========================"%(r))
+            self.sample_clients=self._client_sampling(r)
+            train_loss_list,train_loss, train_loss_std=self.aggregation()
+            test_acc,test_loss=self.test_model()
+            self.args.logger.info("Test_loss: %.3f | Test_accuracy: %.2f | train_loss: %.3f | train_loss_std: %.3f |"
+                                  %(test_loss,test_acc,train_loss,train_loss_std))
+            self.args.logger.info("===========================================================")
+
     def _client_sampling(self, round_idx):
         """Sample clients by given sampling ratio"""
         # make sure for same client sampling for fair comparison
@@ -34,20 +48,6 @@ class Server(object):
         self.args.logger.info("Sample client list: %s"%str(info.numpy().tolist()))
         dist.broadcast(info,self.server_id)
         return info
-
-    def run(self):
-        self.init_process()
-
-        for r in range(self.args.rounds):
-            self.args.logger.info("======================== Round: %d ========================"%(r))
-            self.sample_clients=self._client_sampling(r)
-            train_loss_list=self.aggregation()
-            train_loss,train_loss_std=self.get_train_loss(train_loss_list)
-            test_acc,test_loss=self.test_model()
-            self.args.logger.info("Test_loss: %.3f | Test_accuracy: %.2f | train_loss: %.3f | train_loss_std: %.3f |"
-                                  %(test_loss,test_acc,train_loss,train_loss_std))
-            self.args.logger.info("===========================================================")
-
 
     def set_ratio(self):
         clients_num = len(self.sample_clients)
@@ -67,18 +67,35 @@ class Server(object):
         for i,k in enumerate(self.sample_clients):
             recv_info(info_list[i],k)
             local_params_list, extra_info=self.unpack(info_list[i], indices)
-            train_loss_list.append(extra_info[1].item())
+            id,train_loss=self.get_extra_info(extra_info)
+            train_loss_list.append(train_loss)
             global_params_list=[lp*self.ratio[i]+gp for lp,gp in zip(local_params_list,global_params_list)]
         self.set_model(global_params_list)
+        train_loss, train_loss_std = self.get_train_loss(train_loss_list)
         info, indices=self.pack()
         for i in self.sample_clients:
             send_info(info,i)
-        return train_loss_list
+        return train_loss_list, train_loss, train_loss_std
+
+
+    def add_extra_info(self):
+        extra_info_dict={
+            "client_id":[self.server_id],
+            "train_loss":[self.train_loss]
+        }
+        return extra_info_dict
+
+    def get_extra_info(self,extra_info):
+        id=extra_info[0].item()
+        train_loss=extra_info[1].item()
+        return id, train_loss
+
 
     def pack(self):
         info = [torch.flatten(p.data) for p in self.model.parameters()]
-        extra_info = torch.tensor([0,0.0])
-        info.append(extra_info)
+        extra_info_dict = self.add_extra_info()
+        for k in extra_info_dict:
+            info.append(torch.tensor(extra_info_dict[k],dtype=torch.float32))
         indices=[]
         s=0
         for i in info:
@@ -89,9 +106,11 @@ class Server(object):
         return info, indices
 
     def unpack(self,info,indices):
+        extra_info_dict = self.add_extra_info()
+        dict_size = len(extra_info_dict)
         l = [info[s:e] for (s, e) in indices]
-        model_param=l[:-1]
-        extra_info = l[-1]
+        model_param = l[:-dict_size]
+        extra_info = l[-dict_size:]
         return model_param, extra_info
 
     def set_model(self,model_param):
@@ -151,6 +170,3 @@ class Server(object):
         for para_name, value in self.algo_para.items():
             self.__setattr__(para_name, value)
         return
-
-
-
