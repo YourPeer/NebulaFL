@@ -20,7 +20,7 @@ class Server(object):
         self.test_loader=self.args.distributer["global"]["test"]
         self.model=create_models(self.args.modelname,self.args.dataset)
         self.init_algo_para(self.args.algorithms[self.args.algorithm][1])
-        print("Server Init Network Success!")
+        self.args.logger.info("Server Init Network Success!")
 
     def _client_sampling(self, round_idx):
         """Sample clients by given sampling ratio"""
@@ -31,7 +31,7 @@ class Server(object):
             range(0,self.args.clients-1), clients_per_round, replace=False
         )
         info = torch.tensor(sampled_clients)
-        print("Sample client list: %s"%str(info.numpy().tolist()))
+        self.args.logger.info("Sample client list: %s"%str(info.numpy().tolist()))
         dist.broadcast(info,self.server_id)
         return info
 
@@ -39,12 +39,14 @@ class Server(object):
         self.init_process()
 
         for r in range(self.args.rounds):
-            print("======================== Round: %d ========================"%(r))
+            self.args.logger.info("======================== Round: %d ========================"%(r))
             self.sample_clients=self._client_sampling(r)
-            self.aggregation()
+            train_loss_list=self.aggregation()
+            train_loss,train_loss_std=self.get_train_loss(train_loss_list)
             test_acc,test_loss=self.test_model()
-            print("Test_loss: %.3f | Test_accuracy: %.2f"%(test_loss,test_acc))
-            print("===========================================================")
+            self.args.logger.info("Test_loss: %.3f | Test_accuracy: %.2f | train_loss: %.3f | train_loss_std: %.3f |"
+                                  %(test_loss,test_acc,train_loss,train_loss_std))
+            self.args.logger.info("===========================================================")
 
 
     def set_ratio(self):
@@ -61,18 +63,21 @@ class Server(object):
         info_list=[torch.zeros_like(info) for _ in range(clients_num)]
         global_params_list = [torch.zeros_like(p.data.view(-1,1)) for p in self.model.parameters()]
         self.set_ratio()
+        train_loss_list=[]
         for i,k in enumerate(self.sample_clients):
             recv_info(info_list[i],k)
-            local_params_list, id=self.unpack(info_list[i], indices)
+            local_params_list, extra_info=self.unpack(info_list[i], indices)
+            train_loss_list.append(extra_info[1].item())
             global_params_list=[lp*self.ratio[i]+gp for lp,gp in zip(local_params_list,global_params_list)]
         self.set_model(global_params_list)
         info, indices=self.pack()
         for i in self.sample_clients:
             send_info(info,i)
+        return train_loss_list
 
     def pack(self):
         info = [torch.flatten(p.data) for p in self.model.parameters()]
-        extra_info = torch.tensor([0])
+        extra_info = torch.tensor([0,0.0])
         info.append(extra_info)
         indices=[]
         s=0
@@ -112,7 +117,13 @@ class Server(object):
                 correct += predicted.eq(targets).sum().item()
         self.model.train()
         self.model.cpu()
+
         return 100. * correct / total, test_loss / (batch_idx + 1)
+
+    def get_train_loss(self, train_loss_list):
+        train_loss = np.mean(train_loss_list)
+        train_loss_std = np.std(train_loss_list)
+        return train_loss,train_loss_std
 
     def setup_seed(self,seed):
         r"""

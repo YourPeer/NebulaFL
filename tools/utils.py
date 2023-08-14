@@ -3,9 +3,9 @@ from .model import *
 __all__ = ["create_models"]
 
 MODELS = {
-    "fedavg_mnist": FedAvgNetMNIST,
-    "fedavg_cifar": FedAvgNetCIFAR,
-    "fedavg_tiny": FedAvgNetTiny,
+    "mnistcnn": FedAvgNetMNIST,
+    "cifarcnn": FedAvgNetCIFAR,
+    "tinycnn": FedAvgNetTiny,
     "vgg11": vgg.vgg11,
     "res18": resnet.resnet20,
 }

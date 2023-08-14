@@ -1,3 +1,4 @@
+import copy
 import os
 import random
 import torch
@@ -42,9 +43,10 @@ class Client(object):
         self.model.train()
 
         for round in range(self.args.rounds):
-            sample_clients=self.get_sample_clients()
-            if self.client_id in sample_clients:
+            self.sample_clients=self.get_sample_clients()
+            if self.client_id in self.sample_clients:
                 self.local_train()
+                self.local_train_loss = self.test_model()
                 self.communicate_with_server()
 
     def local_train(self):
@@ -71,7 +73,7 @@ class Client(object):
 
     def pack(self):
         info = [torch.flatten(p.data) for p in self.model.parameters()]
-        extra_info = torch.tensor([self.client_id])
+        extra_info = torch.tensor([self.client_id, self.local_train_loss])
         info.append(extra_info)
         indices = []
         s = 0
@@ -137,3 +139,25 @@ class Client(object):
             self.data_loader = None
             self._train_loader = None
         return batch_data
+
+    def test_model(self):
+        self.model.cuda()
+        self.model.eval()
+        train_loss = 0.0
+        #correct = 0.0
+        total = 0.0
+        criterion = torch.nn.CrossEntropyLoss().cuda()
+        with torch.no_grad():
+            for batch_idx, (inputs, targets) in enumerate(self.train_loader):
+                inputs, targets = inputs.cuda(non_blocking=True), targets.cuda(non_blocking=True)
+                outputs = self.model(inputs)
+                loss = criterion(outputs, targets)
+                train_loss += loss.item()
+                _, predicted = outputs.max(1)
+                total += targets.size(0)
+                #correct += predicted.eq(targets).sum().item()
+        self.model.train()
+        self.model.cpu()
+        local_train_loss=train_loss / (batch_idx + 1)
+        # correct=100. * correct / total
+        return local_train_loss

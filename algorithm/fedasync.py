@@ -16,28 +16,29 @@ class Server(BasicServer):
         for r in range(self.args.rounds):
             lock.acquire()
             self.T+=1
-            print("======================== Round: %d ========================"%(r))
-            self.async_aggregation()
+            self.args.logger.info("======================== Round: %d ========================"%(r))
+            train_loss, id=self.async_aggregation()
             test_acc, test_loss = self.test_model()
-            print("Test_loss: %.3f | Test_accuracy: %.2f" % (test_loss, test_acc))
-            print("===========================================================")
+            self.args.logger.info("Test_loss: %.3f | Test_accuracy: %.3f | Train_loss: %.3f | Client: %d" % (test_loss, test_acc, train_loss, id))
+            self.args.logger.info("===========================================================")
             lock.release()
 
     def async_aggregation(self):
         info, indices = self.pack()
         leader_info = torch.zeros_like(info)
         dist.recv(leader_info)
-        leader_params, id, tao = self.unpack(leader_info, indices)
+        leader_params, id, tao, train_loss = self.unpack(leader_info, indices)
         global_params = [p.data.view(-1, 1) for p in self.model.parameters()]
         alpha_t = self.s(self.T - tao)
         global_params=[gp*(1-alpha_t)+lp*alpha_t for lp,gp in zip(leader_params,global_params)]
         self.set_model(global_params)
         info, indices = self.pack()
         dist.send(info, id)
+        return train_loss, id
 
     def pack(self):
         info = [torch.flatten(p.data) for p in self.model.parameters()]
-        extra_info = torch.tensor([0,self.T])
+        extra_info = torch.tensor([0,self.T,0.0])
         info.append(extra_info)
         indices = []
         s = 0
@@ -54,7 +55,8 @@ class Server(BasicServer):
         extra_info = l[-1].view(-1).tolist()
         id = int(extra_info[0])
         tao=int(extra_info[1])
-        return model_param, id, tao
+        train_loss=extra_info[2]
+        return model_param, id, tao, train_loss
 
     def s(self, delta_tau):
         clients=self.args.clients
@@ -72,6 +74,7 @@ class Client(BasicClient):
         self.tao=0
         for round in range(self.args.rounds):
              self.local_train()
+             self.local_train_loss = self.test_model()
              try:
                 self.communicate_with_server()
              except:
@@ -80,7 +83,7 @@ class Client(BasicClient):
 
     def pack(self):
         info = [torch.flatten(p.data) for p in self.model.parameters()]
-        extra_info = torch.tensor([self.client_id,self.tao])
+        extra_info = torch.tensor([self.client_id,self.tao,self.local_train_loss])
         info.append(extra_info)
         indices = []
         s = 0
